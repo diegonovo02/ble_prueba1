@@ -9,6 +9,7 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <bluetooth/services/nus.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/bluetooth/hci.h>
 
 LOG_MODULE_REGISTER(dongle_main, LOG_LEVEL_INF);
 
@@ -18,8 +19,8 @@ LOG_MODULE_REGISTER(dongle_main, LOG_LEVEL_INF);
 #define APP_CODED_OPT    BT_CONN_LE_PHY_OPT_CODED_S2  // S8 o S2
 
 // Configuración del "PING" periódico 
-#define PING_LEN          20    // Tamaño del paquete en bytes
-#define PING_INTERVAL_MS  500   // Intervalo entre pings en ms
+#define PING_LEN          244    // Tamaño del paquete en bytes
+#define PING_INTERVAL_MS  50   // Intervalo entre pings en ms
 
 // Definición de LED vía Devicetree
 #define LED_DONGLE_NODE DT_ALIAS(led0)
@@ -50,6 +51,28 @@ static void send_ping(struct k_work *w)
     k_work_reschedule(&ping_work, K_MSEC(PING_INTERVAL_MS));
 }
 
+// ---------- Función auxiliar: leer el PHY que está usando el controlador ----------
+static int hci_read_phy(struct bt_conn *c, uint8_t *tx_phy, uint8_t *rx_phy)
+{
+    uint16_t handle;
+    if (bt_hci_get_conn_handle(c, &handle))
+        return -EIO;
+
+    struct net_buf *buf = bt_hci_cmd_create(BT_HCI_OP_LE_READ_PHY,
+                                            sizeof(struct bt_hci_cp_le_read_phy));
+    struct bt_hci_cp_le_read_phy *cp = net_buf_add(buf, sizeof(*cp));
+    cp->handle = sys_cpu_to_le16(handle);
+
+    struct net_buf *rsp;
+    int err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_PHY, buf, &rsp);
+    if (!err) {
+        const struct bt_hci_rp_le_read_phy *rp = (void *)rsp->data;
+        *tx_phy = rp->tx_phy;
+        *rx_phy = rp->rx_phy;
+        net_buf_unref(rsp);
+    }
+    return err;
+}
 
 // ---------- Callback NUS (recibe datos del central) ----------
 static void nus_rx_cb(struct bt_conn *conn, const uint8_t *data, uint16_t len)

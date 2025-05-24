@@ -13,6 +13,8 @@
 #include <bluetooth/gatt_dm.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/byteorder.h>
+
 
 LOG_MODULE_REGISTER(central_uart, LOG_LEVEL_INF);
 
@@ -49,6 +51,29 @@ static int hci_read_rssi(struct bt_conn *c, int8_t *rssi)
     if (!err) {
         *rssi = ((struct bt_hci_rp_read_rssi *)rsp->data)->rssi; // Extrae RSSI en dBm
         net_buf_unref(rsp); // Liberamos buffer de respuesta
+    }
+    return err;
+}
+
+//---------- Función auxiliar: leer el PHY que está usando el controlador ----------
+static int hci_read_phy(struct bt_conn *c, uint8_t *tx_phy, uint8_t *rx_phy)
+{
+    uint16_t handle;
+    if (bt_hci_get_conn_handle(c, &handle))
+        return -EIO;
+
+    struct net_buf *buf = bt_hci_cmd_create(BT_HCI_OP_LE_READ_PHY,
+                                            sizeof(struct bt_hci_cp_le_read_phy));
+    struct bt_hci_cp_le_read_phy *cp = net_buf_add(buf, sizeof(*cp));
+    cp->handle = sys_cpu_to_le16(handle);
+
+    struct net_buf *rsp;
+    int err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_PHY, buf, &rsp);
+    if (!err) {
+        const struct bt_hci_rp_le_read_phy *rp = (void *)rsp->data;
+        *tx_phy = rp->tx_phy;
+        *rx_phy = rp->rx_phy;
+        net_buf_unref(rsp);
     }
     return err;
 }
@@ -195,6 +220,11 @@ static void le_phy_updated(struct bt_conn *conn,
     }
 
     LOG_INF("PHY actualizado: TX = %s, RX = %s", tx_phy_str, rx_phy_str);
+
+    // Verificación extra leyendo el controller
+    uint8_t tx_phy_raw, rx_phy_raw;
+    if (!hci_read_phy(conn, &tx_phy_raw, &rx_phy_raw))
+        LOG_INF("LE Read PHY → TX=%u, RX=%u", tx_phy_raw, rx_phy_raw);
 }
 
 
